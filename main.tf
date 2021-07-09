@@ -1,7 +1,54 @@
 provider "aws" {
-  region  = "us-west-2"
-  access_key = ""
-  secret_key = ""
+  shared_credentials_file = "./credentials"
+  region  = "us-west-1"
+  profile = "default"
+}
+
+# Create VPC
+resource "aws_vpc" "prod-vpc" { 
+  cidr_block       = "10.0.0.0/16"
+  instance_tenancy = "default"
+
+  tags = {
+    Name = "production"
+  }
+}
+
+# Create Internet gateway
+resource "aws_internet_gateway" "gw" {
+  vpc_id = aws_vpc.prod-vpc.id
+
+}
+
+
+#Create Custom Route Table
+resource "aws_route_table" "prod-route-table" {
+  vpc_id = aws_vpc.prod-vpc.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.gw.id
+  }
+
+  route {
+    ipv6_cidr_block        = "::/0"
+    gateway_id = aws_internet_gateway.gw.id
+  }
+
+  tags = {
+    Name = "Prod"
+  }
+}
+
+#Create Subnet
+resource "aws_subnet" "subnet_1" {
+  vpc_id     = aws_vpc.prod-vpc.id
+  cidr_block = "10.0.1.0/24"
+  availability_zone = "us-west-1c"
+
+  tags = {
+    Name = "prod-subnet"
+  }
 }
 
 
@@ -38,7 +85,7 @@ resource "aws_security_group" "allow-web" {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = ["98.160.227.127/32"]
   }
 
   egress {
@@ -69,25 +116,41 @@ resource "aws_eip" "one" {
   depends_on = [aws_internet_gateway.gw]
 }
 
+
 #Create Server
-resource "aws_instance" "net-server-instance" {
-  ami           = "ami-0a2232f27572bfc0d"
-  instance_type = "t3.micro"
-  availability_zone = "us-west-1a"
-  key_name = "main-key"
+resource "aws_instance" "web-server-instance" {
+  ami           = "ami-054965c6cd7c6e462"
+  instance_type = "t2.micro"
+  availability_zone = "us-west-1c"
+  key_name = "Main-key"
 
   network_interface {
     device_index = 0
     network_interface_id = aws_network_interface.web-server-nic.id
   }
 
-  user_data = <<-EOF
-              #!/bin/bash
-              sudo apt update -y
-              sudo apt install ansible -y
-              EOF
+  provisioner "file" {
+    source = "django.sh"
+    destination = "/home/ec2-user/django.sh"
+    }
+  provisioner "remote-exec" {
+    inline = [
+      "sudo chmod 777 /home/ec2-user/django.sh ",
+      "sh /home/ec2-user/django.sh",
+    ]
+    }
+
+    connection {
+      # The default username for our AMI
+      type = "ssh"
+      user = "ec2-user"
+      host = aws_instance.web-server-instance.public_ip
+      private_key = file("Main-key.pem")
+      # The connection will use the local SSH agent for authentication.
+    }
+
   tags = {
-    Name = "net-server"
+    Name = "web-server"
   }
 
 }
